@@ -1,68 +1,45 @@
-import os
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import requests
-from PIL import Image
-import io
-import boto3
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+import boto3
+import os
 
 app = FastAPI()
 
+# --- ここからCORS設定を追加 ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # 本番ではCloudflareのURLに絞るとよりセキュアです
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# --- ここまで ---
 
-# Cloudflare R2 設定（GCPの環境変数から読み込む設計です）
-R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY")
-R2_SECRET_KEY = os.getenv("R2_SECRET_KEY")
-R2_ENDPOINT_URL = os.getenv("R2_ENDPOINT_URL")
-R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
-R2_PUBLIC_DOMAIN = os.getenv("R2_PUBLIC_DOMAIN")
-
+# R2の接続設定（環境変数から読み込み）
 s3 = boto3.client(
     's3',
-    endpoint_url=R2_ENDPOINT_URL,
-    aws_access_key_id=R2_ACCESS_KEY,
-    aws_secret_access_key=R2_SECRET_KEY
+    endpoint_url=os.getenv('R2_ENDPOINT_URL'),
+    aws_access_key_id=os.getenv('R2_ACCESS_KEY'),
+    aws_secret_access_key=os.getenv('R2_SECRET_KEY'),
+    region_name='auto'
 )
 
-class CropRequest(BaseModel):
-    image_url: str
-    x: float
-    y: float
-    width: float
-    height: float
-    file_name: str
+BUCKET_NAME = os.getenv('R2_BUCKET_NAME')
 
-@app.post("/crop")
-async def crop_image(req: CropRequest):
-    try:
-        # 1. 画像のダウンロード [cite: 1184]
-        response = requests.get(req.image_url)
-        img = Image.open(io.BytesIO(response.content))
+@app.post("/upload")
+async def upload_image(file: UploadFile = File(...), target_path: str = Form(...)):
+    file_content = await file.read()
+    
+    # R2へアップロード
+    s3.put_object(
+        Bucket=BUCKET_NAME,
+        Key=target_path,
+        Body=file_content,
+        ContentType=file.content_type
+    )
+    
+    return {"message": "Upload successful", "path": target_path}
 
-        # 2. トリミング (x, y, x+w, y+h) [cite: 1184, 1225]
-        cropped_img = img.crop((req.x, req.y, req.x + req.width, req.y + req.height))
-
-        # 3. WebPに変換して最適化 [cite: 1185, 1225]
-        buffer = io.BytesIO()
-        cropped_img.save(buffer, format="WEBP", quality=80)
-        buffer.seek(0)
-
-        # 4. Cloudflare R2へアップロード [cite: 1186, 1226]
-        file_path = f"processed/{req.file_name}.webp"
-        s3.put_object(
-            Bucket=R2_BUCKET_NAME,
-            Key=file_path,
-            Body=buffer,
-            ContentType="image/webp"
-        )
-
-        return {"url": f"{R2_PUBLIC_DOMAIN}/{file_path}"}
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+@app.get("/")
+def read_root():
+    return {"status": "running"}
