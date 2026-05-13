@@ -43,37 +43,47 @@
             });
         };
 
-        // 2. 工場（Cloud Run）へデータを送信
-        async function sendToFactory() {
-            if (!cropper) return;
-            
-            status.innerText = "⏳ 工場で加工中...";
-            const canvas = cropper.getCroppedCanvas();
-            
-            // CanvasをBlob（画像データ）に変換
-            canvas.toBlob(async (blob) => {
-                const formData = new FormData();
-                formData.append('file', blob, 'cropped.jpg');
-                formData.append('target_path', `processed/${Date.now()}.jpg`); // 保存先パス
+// 2. 工場（Cloud Run）へ座標データを送信
+async function sendToFactory() {
+    if (!cropper) return;
+    
+    status.innerText = "⏳ 工場で切り抜き＆WebP変換中...";
+    
+    // 切り抜き座標を取得
+    const data = cropper.getData();
+    
+    // JSONデータを作成
+    const requestData = {
+        image_url: image.src, // 元画像のURL
+        x: data.x,
+        y: data.y,
+        width: data.width,
+        height: data.height,
+        file_name: `processed_${Date.now()}` // ファイル名
+    };
 
-                try {
-                    const response = await fetch('https://coop-aizu-image-processor-1039416124488.asia-northeast1.run.app/upload', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    if (response.ok) {
-                        status.innerText = "✅ R2への保存が完了しました！";
-                        status.style.color = "green";
-                    } else {
-                        throw new Error('工場からの応答が異常です');
-                    }
-                } catch (e) {
-                    status.innerText = "❌ エラー: " + e.message;
-                    status.style.color = "red";
-                }
-            }, 'image/jpeg');
+    try {
+        const response = await fetch('https://coop-aizu-image-processor-1039416124488.asia-northeast1.run.app/crop', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            status.innerHTML = `✅ 保存完了！<br><a href="${result.url}" target="_blank">保存された画像を見る</a>`;
+            status.style.color = "green";
+        } else {
+            throw new Error(result.detail || '工場での加工に失敗しました');
         }
+    } catch (e) {
+        status.innerText = "❌ エラー: " + e.message;
+        status.style.color = "red";
+    }
+}
     </script>
 </body>
 </html>
