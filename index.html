@@ -34,56 +34,50 @@
         const status = document.getElementById('status');
         let cropper;
 
-        // 1. 画像が読み込まれたらCropperを起動
         image.onload = () => {
             if (cropper) cropper.destroy();
             cropper = new Cropper(image, {
-                aspectRatio: 1, // 正方形固定（インスタ用など）
+                aspectRatio: 1, // 正方形固定
                 viewMode: 1,
             });
         };
 
-// 2. 工場（Cloud Run）へ座標データを送信
-async function sendToFactory() {
-    if (!cropper) return;
-    
-    status.innerText = "⏳ 工場で切り抜き＆WebP変換中...";
-    
-    // 切り抜き座標を取得
-    const data = cropper.getData();
-    
-    // JSONデータを作成
-    const requestData = {
-        image_url: image.src, // 元画像のURL
-        x: data.x,
-        y: data.y,
-        width: data.width,
-        height: data.height,
-        file_name: `processed_${Date.now()}` // ファイル名
-    };
+        // 2. ブラウザでWebP変換し、工場（/upload）へ送信
+        async function sendToFactory() {
+            if (!cropper) return;
+            
+            status.innerText = "⏳ ブラウザで切り抜き＆工場へ送信中...";
+            
+            // Cropper.jsの機能を使って直接WebP(品質80%)に変換
+            cropper.getCroppedCanvas().toBlob(async (blob) => {
+                const fileName = `processed_${Date.now()}.webp`;
+                
+                // main.py の /upload が受け取れる FormData 形式にセット
+                const formData = new FormData();
+                formData.append('file', blob, fileName);
+                formData.append('target_path', fileName);
 
-    try {
-        const response = await fetch('https://coop-aizu-image-processor-1039416124488.asia-northeast1.run.app/crop', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(requestData)
-        });
-        
-        const result = await response.json();
-        
-        if (response.ok) {
-            status.innerHTML = `✅ 保存完了！<br><a href="${result.url}" target="_blank">保存された画像を見る</a>`;
-            status.style.color = "green";
-        } else {
-            throw new Error(result.detail || '工場での加工に失敗しました');
+                try {
+                    // /crop ではなく、実在する /upload エンドポイントへ送信！
+                    const response = await fetch('https://coop-aizu-image-processor-1039416124488.asia-northeast1.run.app/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        status.innerHTML = `✅ 保存完了！ (ファイル名: ${result.path})`;
+                        status.style.color = "green";
+                    } else {
+                        throw new Error(result.detail || '工場での保存に失敗しました');
+                    }
+                } catch (e) {
+                    status.innerText = "❌ エラー: " + e.message;
+                    status.style.color = "red";
+                }
+            }, 'image/webp', 0.8);
         }
-    } catch (e) {
-        status.innerText = "❌ エラー: " + e.message;
-        status.style.color = "red";
-    }
-}
     </script>
 </body>
 </html>
