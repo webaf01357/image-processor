@@ -1,12 +1,9 @@
 export async function onRequest(context) {
-  const { request, env } = context;
+  const { request } = context; // envは一旦外す
   const url = new URL(request.url);
   
-  // Cloudflareの環境変数からGASのURLを取得
-  const gasUrl = env.GAS_URL;
-  if (!gasUrl) {
-    return new Response(JSON.stringify({ error: "GAS_URLが設定されていません" }), { status: 500 });
-  }
+  // ⚠️ ここに直接GASのURLを一時的に書き込みます（強制突破用）
+  const gasUrl = "https://script.google.com/macros/s/AKfycbzOs2S7Cuc0TS4ds4ECBK8X3lufVPHYxiPWCUTw0DuUvtcjNrX3cGqoN5wnb9wk7VhQ/exec";
 
   const targetUrl = new URL(gasUrl);
   targetUrl.search = url.search;
