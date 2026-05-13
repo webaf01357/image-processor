@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>画像切り抜きツール - COOP AIZU</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css">
+    <style>
+        body { font-family: sans-serif; margin: 20px; background: #f4f4f4; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+        #image-to-crop { max-width: 100%; display: block; }
+        .controls { margin-top: 20px; display: flex; flex-direction: column; gap: 10px; }
+        button { padding: 15px; font-size: 16px; cursor: pointer; border: none; border-radius: 5px; }
+        .btn-post { background: #28a745; color: white; }
+        #status { margin-top: 10px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>📷 画像切り抜き・保存</h2>
+        <div>
+            <img id="image-to-crop" src="https://via.placeholder.com/500" alt="素材画像">
+        </div>
+        
+        <div class="controls">
+            <button class="btn-post" onclick="sendToFactory()">切り抜きを実行して保存</button>
+        </div>
+        <div id="status"></div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
+    <script>
+        const image = document.getElementById('image-to-crop');
+        const status = document.getElementById('status');
+        let cropper;
+
+        // 1. 画像が読み込まれたらCropperを起動
+        image.onload = () => {
+            if (cropper) cropper.destroy();
+            cropper = new Cropper(image, {
+                aspectRatio: 1, // 正方形固定（インスタ用など）
+                viewMode: 1,
+            });
+        };
+
+        // 2. 工場（Cloud Run）へデータを送信
+        async function sendToFactory() {
+            if (!cropper) return;
+            
+            status.innerText = "⏳ 工場で加工中...";
+            const canvas = cropper.getCroppedCanvas();
+            
+            // CanvasをBlob（画像データ）に変換
+            canvas.toBlob(async (blob) => {
+                const formData = new FormData();
+                formData.append('file', blob, 'cropped.jpg');
+                formData.append('target_path', `processed/${Date.now()}.jpg`); // 保存先パス
+
+                try {
+                    const response = await fetch('https://coop-aizu-image-processor-1039416124488.asia-northeast1.run.app/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (response.ok) {
+                        status.innerText = "✅ R2への保存が完了しました！";
+                        status.style.color = "green";
+                    } else {
+                        throw new Error('工場からの応答が異常です');
+                    }
+                } catch (e) {
+                    status.innerText = "❌ エラー: " + e.message;
+                    status.style.color = "red";
+                }
+            }, 'image/jpeg');
+        }
+    </script>
+</body>
+</html>
