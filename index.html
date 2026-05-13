@@ -14,7 +14,7 @@
         .btn-post { background: #28a745; color: white; }
         .btn-post:disabled { background: #ccc; cursor: not-allowed; }
         .btn-next { background: #007bff; color: white; margin-top: 10px; display: none; }
-        #status { margin-top: 10px; font-weight: bold; }
+        #status { margin-top: 10px; font-weight: bold; white-space: pre-wrap; }
         .info-box { background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-size: 14px;}
     </style>
 </head>
@@ -23,7 +23,7 @@
         <h2>📷 画像切り抜き・保存</h2>
         
         <div class="info-box" id="image-info">
-            ⏳ スプレッドシートから未処理の画像を探しています...
+            ⏳ スプレッドシートからデータを取得中...
         </div>
 
         <div>
@@ -39,13 +39,9 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
     <script>
-        // ========================================================
-        // ⚠️ 下記のURLを、取得したGASのウェブアプリURLに書き換えてください
-        // ========================================================
-        const GAS_URL = "https://coop-aizu-image-processor-1039416124488.asia-northeast1.run.app/gas-proxy";
-        
-        // バックエンドとR2の設定
-        const CLOUD_RUN_URL = "https://coop-aizu-image-processor-1039416124488.asia-northeast1.run.app/upload";
+        // 通信先設定（Cloud Run プロキシ経由）
+        const GAS_PROXY_URL = "https://coop-aizu-image-processor-1039416124488.asia-northeast1.run.app/gas-proxy";
+        const CLOUD_RUN_UPLOAD_URL = "https://coop-aizu-image-processor-1039416124488.asia-northeast1.run.app/upload";
         const R2_PUBLIC_DOMAIN = "https://pub-a97890a7c21e414f8fce01a1395b6085.r2.dev";
 
         const image = document.getElementById('image-to-crop');
@@ -55,59 +51,62 @@
         const btnNext = document.getElementById('btn-next');
         
         let cropper;
-        let currentRow = null; // スプレッドシートの行番号を保持
+        let currentRow = null;
 
-        // ページ読み込み時に最初の画像を取得
         window.onload = loadNextImage;
 
         image.onload = () => {
             if (cropper) cropper.destroy();
             cropper = new Cropper(image, {
-                aspectRatio: 1, // 正方形固定
+                aspectRatio: 1,
                 viewMode: 1,
             });
             btnSave.disabled = false;
         };
 
-        // 1. GASから未処理の画像URLを取得
+        // 1. スプレッドシートから未処理の画像URLを取得
         async function loadNextImage() {
             status.innerText = "";
-            infoBox.innerText = "⏳ スプレッドシートから未処理の画像を探しています...";
+            infoBox.innerText = "⏳ 次の未処理画像を探しています...";
             btnSave.disabled = true;
             btnNext.style.display = "none";
             if (cropper) { cropper.destroy(); cropper = null; }
             image.src = "";
-            image.alt = "読み込み中...";
 
             try {
-                const response = await fetch(`${GAS_URL}?api=get_unprocessed`);
+                const response = await fetch(`${GAS_PROXY_URL}?api=get_unprocessed`);
+                
+                if (!response.ok) {
+                    throw new Error(`Cloud Run応答なし (Status: ${response.status})\nデプロイ完了まで約2分かかります。`);
+                }
+
                 const data = await response.json();
 
-                if (data.error) {
-                    infoBox.innerText = `✅ ${data.error}`;
-                    image.alt = "未処理の画像はありません";
+                if (data.error || !data.imageUrl) {
+                    infoBox.innerText = `✅ ${data.error || "未処理なし"}`;
                     return;
                 }
 
-                // データ取得成功
                 currentRow = data.row;
-                infoBox.innerText = `📋 処理中: 行番号 ${data.row} / 素材ID: ${data.materialId}`;
+                infoBox.innerText = `📋 処理中: 素材ID ${data.materialId}`;
                 
-                // キャッシュ回避のパラメータをつけて画像読み込み
-                image.src = data.imageUrl + (data.imageUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+                // URLの存在確認をしてからセット
+                const targetUrl = data.imageUrl;
+                image.src = targetUrl + (targetUrl.indexOf('?') !== -1 ? '&' : '?') + 't=' + Date.now();
 
             } catch (e) {
-                infoBox.innerText = "❌ スプレッドシートからの取得に失敗しました。";
-                console.error(e);
+                infoBox.innerText = "❌ データ取得エラー";
+                status.innerText = e.message;
+                status.style.color = "red";
             }
         }
 
-        // 2. 切り抜き・保存・GASへの完了報告
+        // 2. 加工・保存・報告
         async function sendToFactory() {
             if (!cropper || !currentRow) return;
             
             btnSave.disabled = true;
-            status.innerText = "⏳ 1/2: 工場へ送信中...";
+            status.innerText = "⏳ 保存中...";
             status.style.color = "black";
             
             cropper.getCroppedCanvas().toBlob(async (blob) => {
@@ -117,37 +116,29 @@
                 formData.append('target_path', fileName);
 
                 try {
-                    // ① Cloud Run へアップロード
-                    const response = await fetch(CLOUD_RUN_URL, {
-                        method: 'POST',
-                        body: formData
-                    });
-                    
-                    const result = await response.json();
-                    if (!response.ok) throw new Error(result.detail || '工場での保存に失敗しました');
+                    // ① 画像アップロード
+                    const uploadRes = await fetch(CLOUD_RUN_UPLOAD_URL, { method: 'POST', body: formData });
+                    const uploadData = await uploadRes.json();
+                    if (!uploadRes.ok) throw new Error("アップロード失敗");
 
-                    // ② R2の公開URLを生成し、GASへ報告
-                    const r2PublicUrl = `${R2_PUBLIC_DOMAIN}/${result.path}`;
-                    status.innerText = "⏳ 2/2: スプレッドシートを更新中...";
+                    const r2Url = `${R2_PUBLIC_DOMAIN}/${uploadData.path}`;
 
-                    const gasResponse = await fetch(GAS_URL, {
+                    // ② スプレッドシート更新（プロキシ経由）
+                    const updateRes = await fetch(GAS_PROXY_URL, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'text/plain' }, // CORSエラー回避のおまじない
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             action: 'update_status',
                             row: currentRow,
-                            r2Url: r2PublicUrl
+                            r2Url: r2Url
                         })
                     });
 
-                    const gasResult = await gasResponse.json();
-                    if (!gasResult.success) throw new Error(gasResult.error || 'シートの更新に失敗しました');
+                    const updateData = await updateRes.json();
+                    if (!updateData.success) throw new Error("シート更新失敗");
 
-                    // 全ての処理が完了
-                    status.innerHTML = `✅ 完了！ (R2に保存し、シートを更新しました)<br><a href="${r2PublicUrl}" target="_blank">保存された画像を見る</a>`;
+                    status.innerHTML = `✅ 保存 & シート更新完了！<br><a href="${r2Url}" target="_blank">画像を確認</a>`;
                     status.style.color = "green";
-                    
-                    // 次の画像へ進むボタンを表示
                     btnNext.style.display = "block";
 
                 } catch (e) {
