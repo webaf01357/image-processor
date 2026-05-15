@@ -1,1 +1,1 @@
-# coop-aizu-image-processor
+# image-processor
