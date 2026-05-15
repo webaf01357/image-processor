@@ -4,3 +4,4 @@ pillow
 requests
 boto3
 python-multipart
+gunicorn
