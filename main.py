@@ -26,7 +26,7 @@ s3 = boto3.client(
 
 BUCKET_NAME = os.getenv('R2_BUCKET_NAME')
 # 接続先のGAS URL（最新版）
-GAS_URL = "https://script.google.com/macros/s/AKfycbwYCa2OjvrjniRZNX7MtdMZG2iodUbT52XoMN40CqqSwDGF7A-u7ahKPYlluNR2fMPr/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbx1GfMHGGupmZNuVSEz9UR-L5Qui-AqkD2a6CB2vWPRfXaqY66tY2JJruIDlLA0ZuXg/exec"
 
 def verify_line_token(authorization: str):
     """LINE Verify APIを用いたトークン検証（Phase 3のLIFF側実装に合わせて有効化）"""
